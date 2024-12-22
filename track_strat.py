@@ -1,6 +1,6 @@
 # Import FastF1 if not already done
 import fastf1
-
+import pandas as pd 
 # Enable caching and load session as before
 fastf1.Cache.enable_cache('cache')  
 session = fastf1.get_session(2023, 'Bahrain', 'Race')
@@ -243,34 +243,201 @@ print(confusion_matrix(y_test, y_pred))
 
 
 
+# Select features for clustering (using all the telemetry data, not just the fastest lap)
+features = ['Speed', 'Throttle', 'Brake', 'RPM', 'nGear']  # You can adjust the features as needed
+X = telemetry[features]  # Use the entire telemetry dataset
 
-# Find the fastest lap by sorting based on the 'Time' column
-fastest_lap = telemetry.sort_values(by='Time').iloc[0]
-
-# Print out the fastest lap data
-print(fastest_lap)
-
-# Filter the telemetry data for the fastest lap based on Time or SessionTime
-# Adjust this depending on how 'Time' or 'SessionTime' are structured in your dataset
-fastest_lap_data = telemetry[telemetry['Time'] == fastest_lap['Time']]
-
-# Display the filtered data
-print(fastest_lap_data[['Time', 'Speed', 'Throttle', 'Brake', 'RPM', 'nGear']])
-
-# Select features for clustering
-features = ['Speed', 'Throttle', 'Brake', 'RPM', 'nGear']  # You can add more features as needed
-X = fastest_lap_data[features]
-
-# Scale the data (optional, but recommended for clustering)
+# Scale the data (important for clustering)
 from sklearn.preprocessing import StandardScaler
 scaler = StandardScaler()
 X_scaled = scaler.fit_transform(X)
 
-# Apply KMeans clustering
+# Apply KMeans clustering on the full dataset
 from sklearn.cluster import KMeans
-n_clusters = 5  # Use 5 clusters as before
+n_clusters = 5  # Set the number of clusters (5 clusters as an example)
 kmeans = KMeans(n_clusters=n_clusters, random_state=42)
-fastest_lap_data['Cluster'] = kmeans.fit_predict(X_scaled)
+telemetry['Cluster'] = kmeans.fit_predict(X_scaled)
 
-# Display the clustering results
-print(fastest_lap_data[['Speed', 'Throttle', 'Brake', 'RPM', 'nGear', 'Cluster']])
+# Display the clustered data
+print(telemetry[['Time', 'Speed', 'Throttle', 'Brake', 'RPM', 'nGear', 'Cluster']].head())
+
+
+# Summarize cluster statistics
+cluster_summary = telemetry.groupby('Cluster')[['Speed', 'Throttle', 'Brake', 'RPM', 'nGear']].agg(['mean', 'max', 'min', 'std'])
+print(cluster_summary)
+
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# 2D visualization: You can use two features (e.g., Speed and Throttle) to visualize clusters
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x=telemetry['Speed'], y=telemetry['Throttle'], hue=telemetry['Cluster'], palette='viridis')
+plt.title('Cluster Visualization (Speed vs Throttle)')
+plt.xlabel('Speed')
+plt.ylabel('Throttle')
+plt.legend(title='Cluster')
+plt.show()
+
+# Alternatively, for 3D visualization (if you have 3 features), you can use matplotlib 3D plotting
+from mpl_toolkits.mplot3d import Axes3D
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+ax.scatter(telemetry['Speed'], telemetry['Throttle'], telemetry['RPM'], c=telemetry['Cluster'], cmap='viridis')
+ax.set_xlabel('Speed')
+ax.set_ylabel('Throttle')
+ax.set_zlabel('RPM')
+plt.title('3D Cluster Visualization (Speed, Throttle, RPM)')
+plt.show()
+
+# For example, let's see if clusters are related to lap times (if you have lap time data)
+# Assuming 'Time' or a similar metric represents lap time
+telemetry['Time'] = pd.to_timedelta(telemetry['Time'])  # Convert 'Time' to timedelta if necessary
+
+cluster_time_summary = telemetry.groupby('Cluster')['Time'].agg(['mean', 'min', 'max'])
+print(cluster_time_summary)
+
+# Export the clustered telemetry data to a CSV file
+telemetry.to_csv('clustered_telemetry_data.csv', index=False)
+
+# Identify clusters with higher speed and lower throttle or brake usage
+threshold_speed = 250  # Adjust this based on your data
+threshold_brake = 0.1  # Adjust based on your data (lower values for braking)
+
+# Filter data for overtaking
+overtaking_clusters = telemetry[(telemetry['Speed'] > threshold_speed) & (telemetry['Brake'] < threshold_brake)]
+
+# Step 2: If no overtaking data, handle that case
+if overtaking_clusters.empty:
+    print("No overtaking data found with the given thresholds.")
+else:
+    # Step 3: Prepare data for clustering (features: X, Y, Speed)
+    X = overtaking_clusters[['X', 'Y', 'Speed']]
+
+    # Step 4: Scale the features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Step 5: Apply KMeans Clustering (adjust n_clusters as necessary)
+    kmeans = KMeans(n_clusters=5, random_state=42)
+    overtaking_clusters['Cluster'] = kmeans.fit_predict(X_scaled)
+
+    # Step 6: Visualize the clusters on the track using X and Y coordinates
+    plt.figure(figsize=(10, 6))
+    
+    # Scatter plot with clusters colored
+    sns.scatterplot(x=overtaking_clusters['X'], y=overtaking_clusters['Y'], hue=overtaking_clusters['Cluster'], palette='coolwarm', s=100, marker='o')
+    plt.title('Overtaking Zones (Clusters with Higher Speed and Lower Brake)')
+    plt.xlabel('Track X')
+    plt.ylabel('Track Y')
+    plt.legend(title='Cluster', bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.show()
+
+# Optional: Output the cluster centers to understand where overtakes are happening
+print("Cluster Centers (X, Y, Speed):")
+print(kmeans.cluster_centers_)
+
+
+
+# Identify clusters with high braking
+braking_clusters = telemetry[telemetry['Brake'] > telemetry['Brake'].quantile(0.75)]
+
+# Visualize braking clusters
+sns.scatterplot(x=braking_clusters['X'], y=braking_clusters['Y'], hue=braking_clusters['Cluster'], palette='coolwarm')
+plt.title('Optimal Braking Points (Clusters with High Brake)')
+plt.xlabel('Track X')
+plt.ylabel('Track Y')
+plt.legend(title='Cluster')
+plt.show()
+
+
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestRegressor
+
+# Assuming 'Time' is the lap time or sector time
+X = telemetry[['Speed', 'Throttle', 'Brake', 'RPM', 'nGear']]  # Features
+y = telemetry['Time'].dt.total_seconds()  # Convert time to total seconds for prediction
+
+# Split data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Train a random forest regressor
+model = RandomForestRegressor(n_estimators=100, random_state=42)
+model.fit(X_train, y_train)
+
+# Make predictions
+predictions = model.predict(X_test)
+
+# Evaluate the model
+from sklearn.metrics import mean_absolute_error
+mae = mean_absolute_error(y_test, predictions)
+print(f'Mean Absolute Error: {mae}')
+
+
+
+
+
+
+# from sklearn.model_selection import RandomizedSearchCV
+
+# param_distributions = {
+#     'n_estimators': [100, 200, 500],
+#     'max_depth': [5, 10, 20],
+#     'min_samples_split': [2, 5, 10],
+#     'min_samples_leaf': [1, 2, 4],
+# }
+
+# random_search = RandomizedSearchCV(
+#     estimator=RandomForestRegressor(random_state=42),
+#     param_distributions=param_distributions,
+#     n_iter=50,  # Number of random combinations to try
+#     scoring='neg_mean_absolute_error',
+#     cv=5,
+#     random_state=42,
+#     n_jobs=-1
+# )
+# random_search.fit(X_train, y_train)
+
+# print("Best Parameters:", random_search.best_params_)
+
+
+from sklearn.metrics import mean_absolute_error
+from xgboost import XGBRegressor
+
+# Define the best parameters
+best_params = {
+    'n_estimators': 500,
+    'min_samples_split': 10,
+    'min_samples_leaf': 1,
+    'max_depth': 10,
+}
+
+# Instantiate the model with the best parameters
+xgb_model = XGBRegressor(
+    n_estimators=best_params['n_estimators'],
+    max_depth=best_params['max_depth'],
+    learning_rate=0.005,  
+    min_child_weight=best_params['min_samples_split'],
+    reg_alpha=0,  # L1 regularization term, can help with overfitting
+    reg_lambda=10,  # L2 regularization term
+    random_state=42
+)
+
+# Fit the model
+xgb_model.fit(
+    X_train, y_train
+)
+
+
+# Predict and evaluate
+y_pred = xgb_model.predict(X_test)
+mae = mean_absolute_error(y_test, y_pred)
+
+print("Optimized MAE:", mae)
+
+from xgboost import plot_importance
+import matplotlib.pyplot as plt
+
+plot_importance(xgb_model)
+plt.show()
+
+
